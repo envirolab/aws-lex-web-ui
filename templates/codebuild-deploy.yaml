@@ -330,6 +330,40 @@ Parameters:
         Description: >
           This is an optional parameter, if set to True, the AWS Connect live Chat functionality will be available.
           A item to start a live chat will appear at the menu.
+    
+    HideButtonMessageBubble:
+        Type: String
+        Default: false
+        AllowedValues:
+          - true
+          - false
+        Description: >
+          If set to true, hide the message bubble on a response card button press
+    
+    MessageMenu:
+        Type: String
+        Default: false
+        AllowedValues:
+          - true
+          - false
+        Description: >
+          If set to true, each message will have an additional clickable menu on 
+          messages sent to the bot allowing you to repeat that message.
+
+    BackButton:
+        Type: String
+        Default: false
+        AllowedValues:
+          - true
+          - false
+        Description: >
+          If set to true, will show a back button to go back to a previous message.
+
+    MinimizedButtonContent:
+        Type: String
+        Default: ''
+        Description: >
+          This is an optional parameter, if populated will display provided text when chat window is minimized.
 
     retryOnLexPostTextTimeout:
         Type: String
@@ -355,6 +389,11 @@ Parameters:
           This is a required parameter. It defines a timestamp allow the codebuild to execute as long as the
           timestamp from master.yaml and master-pipeline.yaml varies.
 
+    ResourcePrefix:
+        Type: String
+        Description: >
+          This will be a prefix for resources that must have unique names.
+
 Conditions:
     NeedsParentOrigin: !Equals [!Ref ParentOrigin, '']
     ShouldCleanupBuckets: !Equals [!Ref CleanupBuckets, true]
@@ -364,6 +403,7 @@ Resources:
     # Bucket where S3 access logs are stored
     S3ServerAccessLogs:
         Type: AWS::S3::Bucket
+        UpdateReplacePolicy: Retain
         DeletionPolicy: Retain
         Properties:
           VersioningConfiguration:
@@ -377,6 +417,7 @@ Resources:
     # Bucket where the web app is deployed
     WebAppBucket:
         Type: AWS::S3::Bucket
+        UpdateReplacePolicy: Retain
         DeletionPolicy: Retain
         Properties:
             WebsiteConfiguration:
@@ -403,6 +444,7 @@ Resources:
     # Bucket for CloudFrontDistributionLogs
     LexWebUiCloudFrontDistributionLogsBucket:
       Type: AWS::S3::Bucket
+      UpdateReplacePolicy: Retain
       DeletionPolicy: Retain
       Properties:
         VersioningConfiguration:
@@ -433,11 +475,48 @@ Resources:
                 Principal:
                   CanonicalUser: !GetAtt WebAppBucketOriginAccessIdentity.S3CanonicalUserId
 
+    LexWebUIResponseHeaderPolicy:
+      Type : "AWS::CloudFront::ResponseHeadersPolicy"
+      Properties: 
+        ResponseHeadersPolicyConfig:
+          Comment: "Response header policy for LexWebUI"
+          Name: !Join ["-", [!Ref ResourcePrefix, "LexWebUIResponseHeaderPolicy"]] 
+          CorsConfig:
+            AccessControlAllowOrigins:
+              Items:
+                - !If
+                  - NeedsParentOrigin
+                  - "*"
+                  - !Ref ParentOrigin
+            AccessControlAllowHeaders:
+              Items:
+                - "*"
+            AccessControlAllowMethods:
+              Items:
+                -  "GET"
+            AccessControlAllowCredentials: False
+            AccessControlMaxAgeSec: 600
+            OriginOverride: true
+          SecurityHeadersConfig:
+            XSSProtection:
+              Override: False
+              Protection: True
+              ModeBlock: True
+            ReferrerPolicy:
+              Override: False
+              ReferrerPolicy: "strict-origin-when-cross-origin"
+            ContentTypeOptions:
+                Override: false
+            StrictTransportSecurity:
+              Override: False
+              IncludeSubdomains: True
+              Preload: False
+              AccessControlMaxAgeSec: 47304000
+
     LexWebUiDistribution:
         Type: AWS::CloudFront::Distribution
         DependsOn:
         - WebAppBucket
-        - LexWebUiCloudFrontDistributionLogsBucket
         Properties:
           DistributionConfig:
             Origins:
@@ -477,6 +556,7 @@ Resources:
               CachePolicyId: "658327ea-f89d-4fab-a63d-7e88639e58f6"
               OriginRequestPolicyId: "88a5eaf4-2fd4-4709-b370-b4c650ea3fcf"
               ViewerProtocolPolicy: redirect-to-https
+              ResponseHeadersPolicyId: !GetAtt LexWebUIResponseHeaderPolicy.Id
             ViewerCertificate:
               CloudFrontDefaultCertificate: true
             HttpVersion: http2
@@ -564,6 +644,14 @@ Resources:
                       Value: !Ref WebAppConfPositiveFeedback
                     - Name: HELP_INTENT
                       Value: !Ref WebAppConfHelp
+                    - Name: HIDE_BUTTON_MESSAGE_BUBBLE
+                      Value: !Ref HideButtonMessageBubble
+                    - Name: MESSAGE_MENU
+                      Value: !Ref MessageMenu
+                    - Name: BACK_BUTTON
+                      Value: !Ref BackButton
+                    - Name: MIN_BUTTON_CONTENT
+                      Value: !Ref MinimizedButtonContent
                     - Name: UI_TOOLBAR_TITLE
                       Value: !Ref WebAppConfToolbarTitle
                     - Name: ENABLE_LOGIN
@@ -650,6 +738,10 @@ Resources:
             WebAppConfNegativeFeedback: !Ref WebAppConfNegativeFeedback
             WebAppConfPositiveFeedback: !Ref WebAppConfPositiveFeedback
             WebAppConfHelp: !Ref WebAppConfHelp
+            HideButtonMessageBubble: !Ref HideButtonMessageBubble
+            MessageMenu: !Ref MessageMenu
+            BackButton: !Ref BackButton
+            MinimizedButtonContent: !Ref MinimizedButtonContent
             WebAppConfToolbarTitle: !Ref WebAppConfToolbarTitle
             ShouldEnableCognitoLogin: !Ref ShouldEnableCognitoLogin
             ShouldEnableLiveChat: !Ref ShouldEnableLiveChat
@@ -728,6 +820,23 @@ Resources:
                             Resource:
                                 - !Sub "arn:aws:s3:::${WebAppBucket}"
                                 - !Sub "arn:aws:s3:::${WebAppBucket}/*"
+                - PolicyName: PollySynthesizeSpeech
+                  PolicyDocument:
+                      Version: 2012-10-17
+                      Statement:
+                          - Effect: Allow
+                            Action:
+                                - polly:SynthesizeSpeech
+                            Resource: "*"
+                - PolicyName: TranslateText
+                  PolicyDocument:
+                      Version: 2012-10-17
+                      Statement:
+                          - Effect: Allow
+                            Action:
+                                - translate:TranslateText
+                                - comprehend:DetectDominantLanguage
+                            Resource: "*"
                 - PolicyName: CloudWatchLogsCodeBuild
                   PolicyDocument:
                       Version: 2012-10-17
